@@ -36,7 +36,7 @@ client = discord.Client(intents=intents)
 
 @tasks.loop(minutes=10) # Run this task every 10 minutes
 async def check_for_news():
-    print("Checking for new Bluetooth security news...")
+    print(f"Checking for new {KEYWORD} security news...")
     channel = client.get_channel(CHANNEL_ID)
     if not channel:
         print(f"Error: Channel with ID {CHANNEL_ID} not found.")
