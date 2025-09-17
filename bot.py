@@ -2,6 +2,7 @@ import os
 import discord
 import feedparser
 import asyncio
+import sqlite3
 from discord.ext import tasks
 from dotenv import load_dotenv
 
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv() # Load environment variables from .env file
 TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
+DB_FILE = 'news.db' # Name for our SQLite database file
 
 # List of RSS feeds to check
 RSS_FEEDS = [
@@ -21,22 +23,51 @@ RSS_FEEDS = [
 # Keyword to search for (case-insensitive)
 KEYWORD = 'bluetooth'
 
+# --- Database Functions ---
+
+def setup_database():
+    """Create the database and the articles table if they don't exist."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Create a table to store posted article links.
+    # The link is the PRIMARY KEY to prevent duplicates and speed up lookups.
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS articles (
+            link TEXT PRIMARY KEY
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    print("Database setup complete.")
+
+def is_article_posted(link):
+    """Check if an article link already exists in the database."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT link FROM articles WHERE link = ?", (link,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
+def add_posted_article(link):
+    """Add a new article link to the database."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    # Using 'INSERT OR IGNORE' is a safe way to handle potential race conditions
+    cursor.execute("INSERT OR IGNORE INTO articles (link) VALUES (?)", (link,))
+    conn.commit()
+    conn.close()
+
 # --- Bot Setup ---
-
-# We need to track which articles we've already posted
-# In a real production bot, you'd use a database (like SQLite) for this
-posted_articles = set()
-
-# Set up the bot's intents (permissions)
 intents = discord.Intents.default()
-intents.message_content = True # Needed for commands, good practice to have
+# intents.message_content = True # Needed for commands, good practice to have. Is this really needed here?
 client = discord.Client(intents=intents)
 
 # --- Core Logic ---
 
-@tasks.loop(minutes=10) # Run this task every 10 minutes
+@tasks.loop(minutes=10)
 async def check_for_news():
-    print(f"Checking for new {KEYWORD} security news...")
+    print(f"[{discord.utils.utcnow().strftime('%Y-%m-%d %H:%M:%S')}] Checking for news...")
     channel = client.get_channel(CHANNEL_ID)
     if not channel:
         print(f"Error: Channel with ID {CHANNEL_ID} not found.")
@@ -51,11 +82,10 @@ async def check_for_news():
                 summary_lower = entry.summary.lower()
                 
                 if KEYWORD in title_lower or KEYWORD in summary_lower:
-                    # Check if we've already posted this article link
-                    if entry.link not in posted_articles:
+                    # Check the DATABASE instead of the in-memory set
+                    if not is_article_posted(entry.link):
                         print(f"Found new article: {entry.title}")
                         
-                        # Format the message using a Discord Embed for a nicer look
                         embed = discord.Embed(
                             title=f"**{entry.title}**",
                             url=entry.link,
@@ -66,11 +96,10 @@ async def check_for_news():
                         
                         await channel.send(embed=embed)
                         
-                        # Add the link to our set of posted articles
-                        posted_articles.add(entry.link)
+                        # Add the link to the DATABASE
+                        add_posted_article(entry.link)
                         
-                        # Wait a little bit to avoid spamming the Discord API
-                        await asyncio.sleep(1) 
+                        await asyncio.sleep(1)
         except Exception as e:
             print(f"Error fetching or parsing feed {feed_url}: {e}")
 
@@ -78,9 +107,10 @@ async def check_for_news():
 
 @client.event
 async def on_ready():
-    """This function runs when the bot successfully connects to Discord."""
+    """Runs when the bot connects to Discord."""
     print(f'{client.user} has connected to Discord!')
-    # Start the background task
+    # Set up the database before starting the news check loop
+    setup_database()
     check_for_news.start()
 
 # --- Run the Bot ---
