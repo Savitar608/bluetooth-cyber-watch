@@ -21,7 +21,7 @@ RSS_FEEDS = [
 ]
 
 # Keyword to search for (case-insensitive)
-KEYWORD = 'password'
+KEYWORD = 'bluetooth'
 
 # --- Database Functions ---
 
